@@ -5,6 +5,7 @@
 
 #include <grpcpp/grpcpp.h>
 #include <grpcpp/security/credentials.h>
+#include <spdlog/spdlog.h>
 
 #include "PiSubmarine/Error/Api/MakeError.h"
 #include "PiSubmarine/Lease/Api/ErrorCode.h"
@@ -22,6 +23,17 @@ namespace PiSubmarine::Lease::Client::Grpc
         [[nodiscard]] Error::Api::Error MakeContractError(const ErrorCode code)
         {
             return Error::Api::MakeError(Error::Api::ErrorCondition::ContractError, make_error_code(code));
+        }
+
+        [[nodiscard]] std::shared_ptr<spdlog::logger> CreateLogger(Logging::Api::IFactory& loggerFactory)
+        {
+            auto logger = loggerFactory.CreateLogger("Lease.Client.Grpc");
+            if (!logger)
+            {
+                throw std::invalid_argument("Lease.Client.Grpc requires a logger factory that returns a logger");
+            }
+
+            return logger;
         }
 
         [[nodiscard]] Error::Api::Error FromProtoError(const ::pisubmarine::lease::grpc::api::ErrorPayload& error)
@@ -46,14 +58,16 @@ namespace PiSubmarine::Lease::Client::Grpc
         }
     }
 
-    Client::Client(TlsConfig tlsConfig)
+    Client::Client(Logging::Api::IFactory& loggerFactory, TlsConfig tlsConfig)
         : m_TlsConfig(std::move(tlsConfig))
+        , m_Logger(CreateLogger(loggerFactory))
     {
         if (m_TlsConfig.Target.empty() ||
             m_TlsConfig.CertificateAuthority.empty() ||
             m_TlsConfig.ClientCertificateChain.empty() ||
             m_TlsConfig.ClientPrivateKey.empty())
         {
+            SPDLOG_LOGGER_ERROR(m_Logger, "Rejected gRPC lease client construction because TLS configuration is incomplete");
             throw std::invalid_argument("Lease.Client.Grpc requires complete mutual TLS configuration");
         }
 
@@ -73,6 +87,7 @@ namespace PiSubmarine::Lease::Client::Grpc
             ::grpc::SslCredentials(sslOptions),
             channelArguments);
         m_Stub = ::pisubmarine::lease::grpc::api::LeaseService::NewStub(m_Channel);
+        SPDLOG_LOGGER_INFO(m_Logger, "Initialized gRPC lease client for target '{}'", m_TlsConfig.Target);
     }
 
     Error::Api::Result<Api::Lease> Client::AcquireLease(const Api::LeaseRequest& request)
@@ -84,6 +99,7 @@ namespace PiSubmarine::Lease::Client::Grpc
         protoRequest.set_resource(request.Resource.Value);
         ::pisubmarine::lease::grpc::api::LeaseResult response;
 
+        SPDLOG_LOGGER_INFO(m_Logger, "Sending AcquireLease request for resource '{}'", request.Resource.Value);
         return ReadLeaseResult(m_Stub->AcquireLease(&context, protoRequest, &response), response);
     }
 
@@ -96,6 +112,7 @@ namespace PiSubmarine::Lease::Client::Grpc
         protoRequest.set_lease_id(leaseId.Value);
         ::pisubmarine::lease::grpc::api::LeaseResult response;
 
+        SPDLOG_LOGGER_INFO(m_Logger, "Sending RenewLease request for lease '{}'", leaseId.Value);
         return ReadLeaseResult(m_Stub->RenewLease(&context, protoRequest, &response), response);
     }
 
@@ -108,6 +125,7 @@ namespace PiSubmarine::Lease::Client::Grpc
         protoRequest.set_lease_id(leaseId.Value);
         ::pisubmarine::lease::grpc::api::VoidResult response;
 
+        SPDLOG_LOGGER_INFO(m_Logger, "Sending ReleaseLease request for lease '{}'", leaseId.Value);
         return ReadVoidResult(m_Stub->ReleaseLease(&context, protoRequest, &response), response);
     }
 
@@ -120,22 +138,32 @@ namespace PiSubmarine::Lease::Client::Grpc
             if (status.error_code() == ::grpc::StatusCode::UNAUTHENTICATED ||
                 status.error_code() == ::grpc::StatusCode::PERMISSION_DENIED)
             {
+                SPDLOG_LOGGER_WARN(m_Logger, "Lease RPC failed due to authentication error: {}", status.error_message());
                 return std::unexpected(MakeCommunicationError(ErrorCode::Unauthenticated));
             }
 
+            SPDLOG_LOGGER_WARN(m_Logger, "Lease RPC failed: {}", status.error_message());
             return std::unexpected(MakeCommunicationError(ErrorCode::RpcFailed));
         }
 
         switch (response.value_case())
         {
         case ::pisubmarine::lease::grpc::api::LeaseResult::kLease:
+            SPDLOG_LOGGER_INFO(
+                m_Logger,
+                "Lease RPC returned lease '{}' for resource '{}'",
+                response.lease().id(),
+                response.lease().resource());
             return FromProtoLease(response.lease());
         case ::pisubmarine::lease::grpc::api::LeaseResult::kError:
+            SPDLOG_LOGGER_WARN(m_Logger, "Lease RPC returned domain error code {}", response.error().lease_error_code());
             return std::unexpected(FromProtoError(response.error()));
         case ::pisubmarine::lease::grpc::api::LeaseResult::VALUE_NOT_SET:
+            SPDLOG_LOGGER_ERROR(m_Logger, "Lease RPC violated protocol: response payload is empty");
             return std::unexpected(MakeContractError(ErrorCode::ProtocolViolation));
         }
 
+        SPDLOG_LOGGER_ERROR(m_Logger, "Lease RPC violated protocol: unknown response variant");
         return std::unexpected(MakeContractError(ErrorCode::ProtocolViolation));
     }
 
@@ -148,22 +176,28 @@ namespace PiSubmarine::Lease::Client::Grpc
             if (status.error_code() == ::grpc::StatusCode::UNAUTHENTICATED ||
                 status.error_code() == ::grpc::StatusCode::PERMISSION_DENIED)
             {
+                SPDLOG_LOGGER_WARN(m_Logger, "Void lease RPC failed due to authentication error: {}", status.error_message());
                 return std::unexpected(MakeCommunicationError(ErrorCode::Unauthenticated));
             }
 
+            SPDLOG_LOGGER_WARN(m_Logger, "Void lease RPC failed: {}", status.error_message());
             return std::unexpected(MakeCommunicationError(ErrorCode::RpcFailed));
         }
 
         switch (response.value_case())
         {
         case ::pisubmarine::lease::grpc::api::VoidResult::kSuccess:
+            SPDLOG_LOGGER_INFO(m_Logger, "Void lease RPC succeeded");
             return {};
         case ::pisubmarine::lease::grpc::api::VoidResult::kError:
+            SPDLOG_LOGGER_WARN(m_Logger, "Void lease RPC returned domain error code {}", response.error().lease_error_code());
             return std::unexpected(FromProtoError(response.error()));
         case ::pisubmarine::lease::grpc::api::VoidResult::VALUE_NOT_SET:
+            SPDLOG_LOGGER_ERROR(m_Logger, "Void lease RPC violated protocol: response payload is empty");
             return std::unexpected(MakeContractError(ErrorCode::ProtocolViolation));
         }
 
+        SPDLOG_LOGGER_ERROR(m_Logger, "Void lease RPC violated protocol: unknown response variant");
         return std::unexpected(MakeContractError(ErrorCode::ProtocolViolation));
     }
 }
