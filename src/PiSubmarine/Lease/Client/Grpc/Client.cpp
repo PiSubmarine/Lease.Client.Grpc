@@ -1,10 +1,10 @@
 #include "PiSubmarine/Lease/Client/Grpc/Client.h"
 
+#include <chrono>
 #include <stdexcept>
 #include <string_view>
 
 #include <grpcpp/grpcpp.h>
-#include <grpcpp/security/credentials.h>
 #include <spdlog/spdlog.h>
 
 #include "PiSubmarine/Error/Api/MakeError.h"
@@ -58,42 +58,18 @@ namespace PiSubmarine::Lease::Client::Grpc
         }
     }
 
-    Client::Client(Logging::Api::IFactory& loggerFactory, TlsConfig tlsConfig)
-        : m_TlsConfig(std::move(tlsConfig))
-        , m_Logger(CreateLogger(loggerFactory))
+    Client::Client(Logging::Api::IFactory& loggerFactory, ::PiSubmarine::Grpc::Client::Channel& channel)
+        : m_Logger(CreateLogger(loggerFactory))
+        , m_Channel(channel)
     {
-        if (m_TlsConfig.Target.empty() ||
-            m_TlsConfig.CertificateAuthority.empty() ||
-            m_TlsConfig.ClientCertificateChain.empty() ||
-            m_TlsConfig.ClientPrivateKey.empty())
-        {
-            SPDLOG_LOGGER_ERROR(m_Logger, "Rejected gRPC lease client construction because TLS configuration is incomplete");
-            throw std::invalid_argument("Lease.Client.Grpc requires complete mutual TLS configuration");
-        }
-
-        ::grpc::SslCredentialsOptions sslOptions;
-        sslOptions.pem_root_certs = m_TlsConfig.CertificateAuthority;
-        sslOptions.pem_cert_chain = m_TlsConfig.ClientCertificateChain;
-        sslOptions.pem_private_key = m_TlsConfig.ClientPrivateKey;
-
-        ::grpc::ChannelArguments channelArguments;
-        if (!m_TlsConfig.ServerAuthorityOverride.empty())
-        {
-            channelArguments.SetSslTargetNameOverride(m_TlsConfig.ServerAuthorityOverride);
-        }
-
-        m_Channel = ::grpc::CreateCustomChannel(
-            m_TlsConfig.Target,
-            ::grpc::SslCredentials(sslOptions),
-            channelArguments);
-        m_Stub = ::pisubmarine::lease::grpc::api::LeaseService::NewStub(m_Channel);
-        SPDLOG_LOGGER_INFO(m_Logger, "Initialized gRPC lease client for target '{}'", m_TlsConfig.Target);
+        m_Stub = ::pisubmarine::lease::grpc::api::LeaseService::NewStub(m_Channel.Get());
+        SPDLOG_LOGGER_INFO(m_Logger, "Initialized gRPC lease client using injected shared channel");
     }
 
     Error::Api::Result<Api::Lease> Client::AcquireLease(const Api::LeaseRequest& request)
     {
         ::grpc::ClientContext context;
-        context.set_deadline(std::chrono::system_clock::now() + m_TlsConfig.RpcTimeout);
+        context.set_deadline(std::chrono::system_clock::now() + m_Channel.GetRpcTimeout());
 
         ::pisubmarine::lease::grpc::api::AcquireLeaseRequest protoRequest;
         protoRequest.set_resource(request.Resource.Value);
@@ -106,7 +82,7 @@ namespace PiSubmarine::Lease::Client::Grpc
     Error::Api::Result<Api::Lease> Client::RenewLease(const Api::LeaseId& leaseId)
     {
         ::grpc::ClientContext context;
-        context.set_deadline(std::chrono::system_clock::now() + m_TlsConfig.RpcTimeout);
+        context.set_deadline(std::chrono::system_clock::now() + m_Channel.GetRpcTimeout());
 
         ::pisubmarine::lease::grpc::api::RenewLeaseRequest protoRequest;
         protoRequest.set_lease_id(leaseId.Value);
@@ -119,7 +95,7 @@ namespace PiSubmarine::Lease::Client::Grpc
     Error::Api::Result<void> Client::ReleaseLease(const Api::LeaseId& leaseId)
     {
         ::grpc::ClientContext context;
-        context.set_deadline(std::chrono::system_clock::now() + m_TlsConfig.RpcTimeout);
+        context.set_deadline(std::chrono::system_clock::now() + m_Channel.GetRpcTimeout());
 
         ::pisubmarine::lease::grpc::api::ReleaseLeaseRequest protoRequest;
         protoRequest.set_lease_id(leaseId.Value);

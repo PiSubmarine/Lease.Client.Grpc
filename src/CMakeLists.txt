@@ -12,6 +12,9 @@ PiSubmarineInitTarget(${PISUBMARINE_MODULE_NAME})
 PiSubmarineAddDependency("https://github.com/PiSubmarine/Error.Api.git" "")
 target_link_libraries(${PISUBMARINE_MODULE_NAME} PUBLIC PiSubmarine.Error.Api)
 
+PiSubmarineAddDependency("https://github.com/PiSubmarine/Grpc.Client.git" "")
+target_link_libraries(${PISUBMARINE_MODULE_NAME} PUBLIC PiSubmarine.Grpc.Client)
+
 PiSubmarineAddDependency("https://github.com/PiSubmarine/Lease.Api.git" "")
 target_link_libraries(${PISUBMARINE_MODULE_NAME} PUBLIC PiSubmarine.Lease.Api)
 

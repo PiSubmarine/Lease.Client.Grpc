@@ -1,29 +1,18 @@
 #pragma once
 
-#include <chrono>
 #include <memory>
-#include <string>
 
+#include "PiSubmarine/Grpc/Client/Channel.h"
 #include "PiSubmarine/Lease/Api/ILeaseIssuer.h"
 #include "PiSubmarine/Lease/Grpc/Api/LeaseService.h"
 #include "PiSubmarine/Logging/Api/IFactory.h"
 
 namespace PiSubmarine::Lease::Client::Grpc
 {
-    struct TlsConfig
-    {
-        std::string Target;
-        std::string CertificateAuthority;
-        std::string ClientCertificateChain;
-        std::string ClientPrivateKey;
-        std::string ServerAuthorityOverride;
-        std::chrono::milliseconds RpcTimeout{5000};
-    };
-
     class Client final : public Api::ILeaseIssuer
     {
     public:
-        Client(Logging::Api::IFactory& loggerFactory, TlsConfig tlsConfig);
+        Client(Logging::Api::IFactory& loggerFactory, ::PiSubmarine::Grpc::Client::Channel& channel);
 
         [[nodiscard]] Error::Api::Result<Api::Lease> AcquireLease(const Api::LeaseRequest& request) override;
         [[nodiscard]] Error::Api::Result<Api::Lease> RenewLease(const Api::LeaseId& leaseId) override;
@@ -37,9 +26,8 @@ namespace PiSubmarine::Lease::Client::Grpc
             const ::grpc::Status& status,
             const ::pisubmarine::lease::grpc::api::VoidResult& response) const;
 
-        TlsConfig m_TlsConfig;
         std::shared_ptr<spdlog::logger> m_Logger;
-        std::shared_ptr<::grpc::Channel> m_Channel;
+        ::PiSubmarine::Grpc::Client::Channel& m_Channel;
         std::unique_ptr<::pisubmarine::lease::grpc::api::LeaseService::Stub> m_Stub;
     };
 }
