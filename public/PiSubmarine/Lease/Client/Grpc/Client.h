@@ -14,11 +14,14 @@ namespace PiSubmarine::Lease::Client::Grpc
     public:
         Client(Logging::Api::IFactory& loggerFactory, ::PiSubmarine::Grpc::Client::Channel& channel);
 
-        [[nodiscard]] Error::Api::Result<Api::Lease> AcquireLease(const Api::LeaseRequest& request) override;
+        [[nodiscard]] Error::Api::Result<Api::LeaseGrant> AcquireLease(const Api::LeaseRequest& request) override;
         [[nodiscard]] Error::Api::Result<Api::Lease> RenewLease(const Api::LeaseId& leaseId) override;
         [[nodiscard]] Error::Api::Result<void> ReleaseLease(const Api::LeaseId& leaseId) override;
 
     private:
+        [[nodiscard]] Error::Api::Result<Api::LeaseGrant> ReadLeaseGrantResult(
+            const ::grpc::Status& status,
+            const ::pisubmarine::lease::grpc::api::LeaseGrantResult& response) const;
         [[nodiscard]] Error::Api::Result<Api::Lease> ReadLeaseResult(
             const ::grpc::Status& status,
             const ::pisubmarine::lease::grpc::api::LeaseResult& response) const;

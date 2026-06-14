@@ -1,8 +1,11 @@
 #include "PiSubmarine/Lease/Client/Grpc/Client.h"
 
+#include <cstddef>
 #include <chrono>
 #include <stdexcept>
+#include <string>
 #include <string_view>
+#include <vector>
 
 #include <grpcpp/grpcpp.h>
 #include <spdlog/spdlog.h>
@@ -56,6 +59,18 @@ namespace PiSubmarine::Lease::Client::Grpc
                 .Resource = Api::ResourceId{.Value = lease.resource()},
                 .Duration = std::chrono::milliseconds(lease.duration_ms())};
         }
+
+        [[nodiscard]] Api::LeaseSecret FromProtoLeaseSecret(const std::string& secret)
+        {
+            std::vector<std::byte> bytes;
+            bytes.reserve(secret.size());
+            for (const char value : secret)
+            {
+                bytes.push_back(static_cast<std::byte>(static_cast<unsigned char>(value)));
+            }
+
+            return Api::LeaseSecret{.Value = std::move(bytes)};
+        }
     }
 
     Client::Client(Logging::Api::IFactory& loggerFactory, ::PiSubmarine::Grpc::Client::Channel& channel)
@@ -66,17 +81,17 @@ namespace PiSubmarine::Lease::Client::Grpc
         SPDLOG_LOGGER_INFO(m_Logger, "Initialized gRPC lease client using injected shared channel");
     }
 
-    Error::Api::Result<Api::Lease> Client::AcquireLease(const Api::LeaseRequest& request)
+    Error::Api::Result<Api::LeaseGrant> Client::AcquireLease(const Api::LeaseRequest& request)
     {
         ::grpc::ClientContext context;
         context.set_deadline(std::chrono::system_clock::now() + m_Channel.GetRpcTimeout());
 
         ::pisubmarine::lease::grpc::api::AcquireLeaseRequest protoRequest;
         protoRequest.set_resource(request.Resource.Value);
-        ::pisubmarine::lease::grpc::api::LeaseResult response;
+        ::pisubmarine::lease::grpc::api::LeaseGrantResult response;
 
         SPDLOG_LOGGER_INFO(m_Logger, "Sending AcquireLease request for resource '{}'", request.Resource.Value);
-        return ReadLeaseResult(m_Stub->AcquireLease(&context, protoRequest, &response), response);
+        return ReadLeaseGrantResult(m_Stub->AcquireLease(&context, protoRequest, &response), response);
     }
 
     Error::Api::Result<Api::Lease> Client::RenewLease(const Api::LeaseId& leaseId)
@@ -103,6 +118,46 @@ namespace PiSubmarine::Lease::Client::Grpc
 
         SPDLOG_LOGGER_INFO(m_Logger, "Sending ReleaseLease request for lease '{}'", leaseId.Value);
         return ReadVoidResult(m_Stub->ReleaseLease(&context, protoRequest, &response), response);
+    }
+
+    Error::Api::Result<Api::LeaseGrant> Client::ReadLeaseGrantResult(
+        const ::grpc::Status& status,
+        const ::pisubmarine::lease::grpc::api::LeaseGrantResult& response) const
+    {
+        if (!status.ok())
+        {
+            if (status.error_code() == ::grpc::StatusCode::UNAUTHENTICATED ||
+                status.error_code() == ::grpc::StatusCode::PERMISSION_DENIED)
+            {
+                SPDLOG_LOGGER_WARN(m_Logger, "AcquireLease RPC failed due to authentication error: {}", status.error_message());
+                return std::unexpected(MakeCommunicationError(ErrorCode::Unauthenticated));
+            }
+
+            SPDLOG_LOGGER_WARN(m_Logger, "AcquireLease RPC failed: {}", status.error_message());
+            return std::unexpected(MakeCommunicationError(ErrorCode::RpcFailed));
+        }
+
+        switch (response.value_case())
+        {
+        case ::pisubmarine::lease::grpc::api::LeaseGrantResult::kLeaseGrant:
+            SPDLOG_LOGGER_INFO(
+                m_Logger,
+                "AcquireLease RPC returned lease '{}' for resource '{}'",
+                response.lease_grant().lease().id(),
+                response.lease_grant().lease().resource());
+            return Api::LeaseGrant{
+                .Lease = FromProtoLease(response.lease_grant().lease()),
+                .Secret = FromProtoLeaseSecret(response.lease_grant().secret())};
+        case ::pisubmarine::lease::grpc::api::LeaseGrantResult::kError:
+            SPDLOG_LOGGER_WARN(m_Logger, "AcquireLease RPC returned domain error code {}", response.error().lease_error_code());
+            return std::unexpected(FromProtoError(response.error()));
+        case ::pisubmarine::lease::grpc::api::LeaseGrantResult::VALUE_NOT_SET:
+            SPDLOG_LOGGER_ERROR(m_Logger, "AcquireLease RPC violated protocol: response payload is empty");
+            return std::unexpected(MakeContractError(ErrorCode::ProtocolViolation));
+        }
+
+        SPDLOG_LOGGER_ERROR(m_Logger, "AcquireLease RPC violated protocol: unknown response variant");
+        return std::unexpected(MakeContractError(ErrorCode::ProtocolViolation));
     }
 
     Error::Api::Result<Api::Lease> Client::ReadLeaseResult(
