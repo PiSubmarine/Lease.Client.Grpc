@@ -103,7 +103,7 @@ namespace PiSubmarine::Lease::Client::Grpc
         protoRequest.set_lease_id(leaseId.Value);
         ::pisubmarine::lease::grpc::api::LeaseResult response;
 
-        SPDLOG_LOGGER_INFO(m_Logger, "Sending RenewLease request for lease '{}'", leaseId.Value);
+        SPDLOG_LOGGER_DEBUG(m_Logger, "Sending RenewLease request for lease '{}'", leaseId.Value);
         return ReadRenewLeaseResult(m_Stub->RenewLease(&context, protoRequest, &response), response);
     }
 
