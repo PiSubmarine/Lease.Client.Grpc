@@ -22,7 +22,7 @@ namespace PiSubmarine::Lease::Client::Grpc
         [[nodiscard]] Error::Api::Result<Api::LeaseGrant> ReadLeaseGrantResult(
             const ::grpc::Status& status,
             const ::pisubmarine::lease::grpc::api::LeaseGrantResult& response) const;
-        [[nodiscard]] Error::Api::Result<Api::Lease> ReadLeaseResult(
+        [[nodiscard]] Error::Api::Result<Api::Lease> ReadRenewLeaseResult(
             const ::grpc::Status& status,
             const ::pisubmarine::lease::grpc::api::LeaseResult& response) const;
         [[nodiscard]] Error::Api::Result<void> ReadVoidResult(
