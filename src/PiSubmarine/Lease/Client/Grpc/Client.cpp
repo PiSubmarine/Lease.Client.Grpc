@@ -169,25 +169,25 @@ namespace PiSubmarine::Lease::Client::Grpc
             if (status.error_code() == ::grpc::StatusCode::UNAUTHENTICATED ||
                 status.error_code() == ::grpc::StatusCode::PERMISSION_DENIED)
             {
-                SPDLOG_LOGGER_WARN(m_Logger, "RenewLease RPC failed due to authentication error: {}", status.error_message());
+                SPDLOG_LOGGER_ERROR(m_Logger, "RenewLease RPC failed due to authentication error: {}", status.error_message());
                 return std::unexpected(MakeCommunicationError(ErrorCode::Unauthenticated));
             }
 
-            SPDLOG_LOGGER_WARN(m_Logger, "RenewLeaseLease RPC failed: {}", status.error_message());
+            SPDLOG_LOGGER_ERROR(m_Logger, "RenewLeaseLease RPC failed: {}", status.error_message());
             return std::unexpected(MakeCommunicationError(ErrorCode::RpcFailed));
         }
 
         switch (response.value_case())
         {
         case ::pisubmarine::lease::grpc::api::LeaseResult::kLease:
-            SPDLOG_LOGGER_INFO(
+            SPDLOG_LOGGER_DEBUG(
                 m_Logger,
                 "RenewLease RPC returned lease '{}' for resource '{}'",
                 response.lease().id(),
                 response.lease().resource());
             return FromProtoLease(response.lease());
         case ::pisubmarine::lease::grpc::api::LeaseResult::kError:
-            SPDLOG_LOGGER_WARN(m_Logger, "RenewLease RPC returned domain error code {}", response.error().lease_error_code());
+            SPDLOG_LOGGER_ERROR(m_Logger, "RenewLease RPC returned domain error code {}", response.error().lease_error_code());
             return std::unexpected(FromProtoError(response.error()));
         case ::pisubmarine::lease::grpc::api::LeaseResult::VALUE_NOT_SET:
             SPDLOG_LOGGER_ERROR(m_Logger, "RenewLease RPC violated protocol: response payload is empty");
