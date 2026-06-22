@@ -146,7 +146,7 @@ namespace PiSubmarine::Lease::Client::Grpc
                 response.lease_grant().lease().id(),
                 response.lease_grant().lease().resource());
             return Api::LeaseGrant{
-                .Lease = FromProtoLease(response.lease_grant().lease()),
+                .GrantedLease = FromProtoLease(response.lease_grant().lease()),
                 .Secret = FromProtoLeaseSecret(response.lease_grant().secret())};
         case ::pisubmarine::lease::grpc::api::LeaseGrantResult::kError:
             SPDLOG_LOGGER_WARN(m_Logger, "AcquireLease RPC returned domain error code {}", response.error().lease_error_code());
